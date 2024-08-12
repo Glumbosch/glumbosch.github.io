@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Masyu Puzzle</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            flex-direction: column;
+        }
+        canvas {
+            border: 1px solid black;
+            width: 90vw;
+            height: auto;
+            max-width: 400px;
+            max-height: 400px;
+        }
+        textarea {
+            margin-top: 20px;
+            width: 90vw;
+            max-width: 400px;
+            height: 200px;
+        }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        @media (min-width: 600px) {
+            canvas, textarea {
+                width: 400px;
+                height: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="masyuCanvas" width="400" height="400"></canvas>
+    <textarea id="gameStateText" readonly></textarea>
+    <button id="checkPathButton">Check Path</button>
+    <div id="result"></div>
+
+    <script>
+        const canvas = document.getElementById('masyuCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameStateText = document.getElementById('gameStateText');
+        const checkPathButton = document.getElementById('checkPathButton');
+        const resultDiv = document.getElementById('result');
+
+        const board = [
+            [0, 0, 0, 2, 0,0],
+            [3, 0, 3, 0, 0,3],
+            [0, 0, 0, 0, 0,0],
+            [0, 0, 3, 0, 3,0],
+            [0, 0, 3, 0, 0,0],
+            [2, 3, 0, 0, 3,0]
+        ];
+
+        const solution = [[6,10,12,6,10,12],
+[5,0,5,5,0,5],
+[5,0,3,9,0,5],
+[5,6,10,10,10,9],
+[5,3,10,10,10,12],
+[3,10,10,10,10,9]]
+
+        const gameState = Array.from({ length: board.length }, () => Array(board[0].length).fill(0));
+        const imageRotations = Array.from({ length: board.length }, () => Array(board[0].length).fill(null));
+
+        const cellSize = 66;
+        const imageUrl1 = 'https://i.imgur.com/xiWODWF.png';
+        const imageUrl2 = 'https://i.imgur.com/5jAY6V6.png';
+        let image1 = new Image();
+        let image2 = new Image();
+        image1.src = imageUrl1;
+        image2.src = imageUrl2;
+
+        function drawBoard() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'black'; // Keep the grid lines black
+            for (let row = 0; row < board.length; row++) {
+                for (let col = 0; col < board[row].length; col++) {
+                    ctx.strokeRect(col * cellSize, row * cellSize, cellSize, cellSize);
+                    if (board[row][col] === 1) {
+                        ctx.beginPath();
+                        ctx.arc(col * cellSize + cellSize / 2, row * cellSize + cellSize / 2, cellSize / 4, 0, 2 * Math.PI);
+                        ctx.fillStyle = 'black';
+                        ctx.fill();
+                    } else if (board[row][col] === 2) {
+                        const rotation = imageRotations[row][col] !== null ? imageRotations[row][col] : Math.random() * 360;
+                        if (imageRotations[row][col] === null) {
+                            imageRotations[row][col] = rotation;
+                        }
+                        drawRotatedImage(ctx, image1, col * cellSize + cellSize / 2, row * cellSize + cellSize / 2, cellSize / 2, rotation);
+                    } else if (board[row][col] === 3) {
+                        drawImage(ctx, image2, col * cellSize + cellSize / 2, row * cellSize + cellSize / 2, cellSize / 2);
+                    }
+                }
+            }
+        }
+
+        function drawGameState() {
+            ctx.lineWidth = 10; // Wider paths
+            ctx.strokeStyle = 'rgba(0, 0, 255, 1)'; // Blue color with 0.5 opacity
+
+            for (let row = 0; row < gameState.length; row++) {
+                for (let col = 0; col < gameState[row].length; col++) {
+                    const cellState = gameState[row][col];
+                    if (cellState & 1) { // Top line
+                        ctx.beginPath();
+                        ctx.moveTo(col * cellSize + cellSize / 2 , row * cellSize-ctx.lineWidth/2);
+                        ctx.lineTo(col * cellSize + cellSize / 2, row * cellSize + cellSize / 2+ctx.lineWidth/2);
+                        ctx.stroke();
+                    }
+                    if (cellState & 2) { // Right line
+                        ctx.beginPath();
+                        ctx.moveTo(col * cellSize + cellSize / 2-ctx.lineWidth/2, row * cellSize + cellSize / 2);
+                        ctx.lineTo(col * cellSize + cellSize+ctx.lineWidth/2, row * cellSize + cellSize / 2);
+                        ctx.stroke();
+                    }
+                    if (cellState & 4) { // Bottom line
+                        ctx.beginPath();
+                        ctx.moveTo(col * cellSize + cellSize / 2, row * cellSize + cellSize / 2-ctx.lineWidth/2);
+                        ctx.lineTo(col * cellSize + cellSize / 2, row * cellSize + cellSize+ctx.lineWidth/2);
+                        ctx.stroke();
+                    }
+                    if (cellState & 8) { // Left line
+                        ctx.beginPath();
+                        ctx.moveTo(col * cellSize, row * cellSize + cellSize / 2);
+                        ctx.lineTo(col * cellSize + cellSize / 2, row * cellSize + cellSize / 2);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        function updateGameStateText() {
+            gameStateText.value = "["+gameState.map(row => row.join(',')).join('],\n[')+"]";
+        }
+
+        function toggleLine(row, col, line) {
+            if (line === 1 && row > 0) gameState[row - 1][col] ^= 4; // Toggle bottom line of cell above
+            if (line === 2 && col < board[0].length - 1) gameState[row][col + 1] ^= 8; // Toggle left line of cell to the right
+            if (line === 4 && row < board.length - 1) gameState[row + 1][col] ^= 1; // Toggle top line of cell below
+            if (line === 8 && col > 0) gameState[row][col - 1] ^= 2; // Toggle right line of cell to the left
+
+            gameState[row][col] ^= line;
+        }
+
+        function drawRotatedImage(ctx, image, x, y, size, rotation) {
+        let scale=0.8;
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(scale,scale);
+            ctx.rotate((rotation * Math.PI) / 180);
+            ctx.drawImage(image, -size, -size, size * 2, size * 2);
+            ctx.restore();
+        }
+
+        function drawImage(ctx, image, x, y, size) {
+            ctx.drawImage(image, x - size, y - size, size * 2, size * 2);
+        }
+
+        let tries = 0;
+
+        checkPathButton.addEventListener('click', () => {
+            tries++;
+            let isSolved = true;
+            for (let row = 0; row < gameState.length; row++) {
+                for (let col = 0; col < gameState[row].length; col++) {
+                    if (gameState[row][col] !== solution[row][col]) {
+                        isSolved = false;
+                        break;
+                    }
+                }
+                if (!isSolved) break;
+            }
+            if (isSolved) {
+                resultDiv.textContent = `Puzzle solved in ${tries} tries!`;
+            } else {
+                resultDiv.textContent = 'Puzzle not solved. Try again.';
+            }
+        });
+
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            const col = Math.floor(x / cellSize);
+            const row = Math.floor(y / cellSize);
+
+            if (row >= 0 && row < board.length && col >= 0 && col < board[0].length) {
+                const cellX = (x % cellSize) / cellSize;
+                const cellY = (y % cellSize) / cellSize;
+
+                let line = 0;
+                if (cellY < 0.25 && cellX > 0.25 && cellX < 0.75) line = 1; // Top line
+                else if (cellX > 0.75 && cellY > 0.25 && cellY < 0.75) line = 2; // Right line
+                else if (cellY > 0.75 && cellX > 0.25 && cellX < 0.75) line = 4; // Bottom line
+                else if (cellX < 0.25 && cellY > 0.25 && cellY < 0.75) line = 8; // Left line
+
+                if (line === 1 && row === 0) return; // Top line cannot be toggled if there is no cell above
+                if (line === 2 && col === board[0].length - 1) return; // Right line cannot be toggled if there is no cell to the right
+                if (line === 4 && row === board.length - 1) return; // Bottom line cannot be toggled if there is no cell below
+                if (line === 8 && col === 0) return; // Left line cannot be toggled if there is no cell to the left
+
+                toggleLine(row, col, line);
+                drawBoard();
+                drawGameState();
+                updateGameStateText();
+            }
+        });
+
+        image1.onload = image2.onload = () => {
+            drawBoard();
+            updateGameStateText();
+        };
+
+let isDrawing = false;
+let lastRow = null;
+let lastCol = null;
+
+canvas.addEventListener('mousedown', (event) => {
+    isDrawing = true;
+    handleInteraction(event);
+});
+
+canvas.addEventListener('mouseup', () => {
+    isDrawing = false;
+    lastRow = null;
+    lastCol = null;
+});
+
+canvas.addEventListener('mousemove', (event) => {
+    if (isDrawing) {
+        handleInteraction(event);
+    }
+});
+
+canvas.addEventListener('touchstart', (event) => {
+    isDrawing = true;
+    handleInteraction(event.touches[0]);
+});
+
+canvas.addEventListener('touchend', () => {
+    isDrawing = false;
+    lastRow = null;
+    lastCol = null;
+});
+
+canvas.addEventListener('touchmove', (event) => {
+    if (isDrawing) {
+        handleInteraction(event.touches[0]);
+    }
+    event.preventDefault();  // Prevent scrolling during touch
+});
+
+function handleInteraction(event) {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const col = Math.floor(x / cellSize);
+    const row = Math.floor(y / cellSize);
+
+    if (row >= 0 && row < board.length && col >= 0 && col < board[0].length) {
+        if (lastRow !== null && lastCol !== null) {
+            // Determine the direction of the swipe or drag
+            if (row === lastRow && col === lastCol - 1) {
+                toggleLine(row, col, 2); // Right line of the previous cell
+            } else if (row === lastRow && col === lastCol + 1) {
+                toggleLine(lastRow, lastCol, 2); // Right line of the current cell
+            } else if (row === lastRow - 1 && col === lastCol) {
+                toggleLine(row, col, 4); // Bottom line of the previous cell
+            } else if (row === lastRow + 1 && col === lastCol) {
+                toggleLine(lastRow, lastCol, 4); // Bottom line of the current cell
+            }
+        }
+
+        lastRow = row;
+        lastCol = col;
+
+        drawBoard();
+        drawGameState();
+        updateGameStateText();
+    }
+}
+
+    </script>
+</body>
+</html>
