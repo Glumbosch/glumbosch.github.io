@@ -267,8 +267,8 @@ function myfunc (ev) {
 canvas {
     width: 90vw;
     height: auto;
-    max-width: 100%;
-    max-height: 100vh;
+    max-width: 90%;
+    max-height: 90vh;
 }
 textarea {
 display:none;
@@ -289,7 +289,7 @@ button {
     &lt;canvas id=&quot;masyuCanvas&quot; &gt;&lt;/canvas&gt;
     &lt;textarea id=&quot;gameStateText&quot; display=&quot;none&quot;&gt;&lt;/textarea&gt;
     &lt;button id=&quot;checkPathButton&quot;&gt;Check Path&lt;/button&gt;
-    &lt;button id=&quot;ResetButton&quot;&gt;reset&lt;/button&gt;
+    &lt;button id=&quot;resetButton&quot;&gt;reset&lt;/button&gt;
     &lt;div id=&quot;result&quot;&gt;&lt;/div&gt;
 &lt;/div&gt;
     &lt;script&gt;
@@ -552,6 +552,21 @@ function handleInteraction(event) {
     }
 }
 
+// Add this function to reset the game state
+function resetGameState() {
+    for (let row = 0; row &lt; gameState.length; row++) {
+        for (let col = 0; col &lt; gameState[row].length; col++) {
+            gameState[row][col] = 0;
+        }
+    }
+    drawBoard(canvas.width / board[0].length);
+    drawGameState(canvas.width / board[0].length);
+    updateGameStateText();
+}
+
+// Add an event listener for the reset button
+const resetButton = document.getElementById(&#39;resetButton&#39;);
+resetButton.addEventListener(&#39;click&#39;, resetGameState);
 
     &lt;/script&gt;
 </tw-passagedata></tw-storydata>
