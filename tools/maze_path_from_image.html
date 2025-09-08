@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Maze from Image — Single‑file Web App (SVG paths + adjustable wall width)</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12161b;
+    --muted: #a7b0be;
+    --text: #e8ecf1;
+    --accent: #66d9ef;
+    --accent2: #a6e22e;
+    --danger: #ff6b6b;
+    --border: #27313b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji';
+    line-height: 1.35;
+  }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #0d1117, #0c1014); }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: .2px; }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+
+  main { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: clip; }
+  .card h2 { margin: 0; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--muted);
+    padding: 12px 14px; border-bottom: 1px solid var(--border); background: #0f141a; }
+  .card .body { padding: 12px 14px; }
+
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .controls .full { grid-column: 1 / -1; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  input[type="number"], input[type="text"], input[type="range"], select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: #0d1217; color: var(--text); }
+  input[type="checkbox"] { transform: translateY(1px); }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .btn { cursor: pointer; background: #111822; color: var(--text); border: 1px solid var(--border); padding: 8px 10px; border-radius: 10px; font-weight: 600; font-size: 13px; }
+  .btn:hover { border-color: #314050; }
+  .btn.acc { background: #0f1a20; border-color: #244350; color: var(--accent); }
+  .btn.good { background: #0f1a16; border-color: #224536; color: var(--accent2); }
+  .btn.danger { background: #1b1212; border-color: #4b2a2a; color: var(--danger); }
+  .btn.small { padding: 6px 8px; font-size: 12px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button { background: #0e141a; border: 1px solid var(--border); color: var(--muted); padding: 6px 10px; border-radius: 999px; cursor: pointer; font-weight: 600; }
+  .tabs button.active { color: var(--text); border-color: #385061; background: #0f1a22; }
+
+  canvas.preview { width: 100%; height: auto; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+  .preview-wrap { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  .status { padding: 8px 12px; border-top: 1px solid var(--border); background: #0f1419; color: var(--muted); font-size: 12px; }
+  .kbd { background: #11161c; border: 1px solid var(--border); padding: 2px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hr { height: 1px; background: var(--border); margin: 10px 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: -4px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Maze from Image — browser version</h1>
+    <p>Generate a perfect maze whose unique shortest path follows a drawn/thresholded line. Export PNG or compact SVG (single <path> walls). Adjustable wall width, cell size & seed.</p>
+  </header>
+
+  <main>
+    <!-- Left: Controls -->
+    <section class="card" id="controls-card">
+      <h2>Controls</h2>
+      <div class="body">
+        <div class="tabs">
+          <button id="tab-upload" class="active" type="button">Upload Image</button>
+          <button id="tab-draw" type="button">Draw Path</button>
+        </div>
+
+        <!-- Upload section -->
+        <div id="upload-section">
+          <div class="controls">
+            <div class="full">
+              <label>Input image (PNG/JPG/BMP)</label>
+              <input id="fileInput" type="file" accept="image/png,image/jpeg,image/jpg,image/bmp" />
+              <div class="hint">Dark pixels are treated as the desired path (unless you check “Invert”).</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Draw section -->
+        <div id="draw-section" style="display:none">
+          <div class="controls">
+            <div>
+              <label>Canvas width (px)</label>
+              <input id="drawWidth" type="number" min="10" max="500" value="40" />
+            </div>
+            <div>
+              <label>Canvas height (px)</label>
+              <input id="drawHeight" type="number" min="10" max="500" value="40" />
+            </div>
+            <div>
+              <label>Brush size (px)</label>
+              <input id="brushSize" type="number" min="1" max="50" value="4" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <div class="row">
+                <button class="btn small" id="modeDraw">✏️ Draw</button>
+                <button class="btn small" id="modeErase">🧽 Erase</button>
+                <button class="btn small danger" id="clearCanvas">Clear</button>
+              </div>
+            </div>
+            <div class="full">
+              <canvas id="drawCanvas" width="40" height="40" style="background:#fff; width:100%; border:1px solid var(--border); border-radius:8px; image-rendering: pixelated;"></canvas>
+              <div class="hint">Tip: zoom your browser in to draw pixel-perfect paths on small canvases. The generated maze uses this exact pixel grid.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <!-- Shared parameters -->
+        <div class="controls">
+          <div>
+            <label>Threshold</label>
+            <input id="threshold" type="number" min="0" max="255" value="128" />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <div class="row"><input id="invert" type="checkbox" />&nbsp;<span class="muted">Invert (light path)</span></div>
+          </div>
+          <div class="full row" style="align-items:center;">
+            <input id="keepLargest" type="checkbox" checked />
+            <label for="keepLargest" style="margin:0 0 0 8px;">Keep only largest connected component</label>
+          </div>
+          <div>
+            <label>Cell size / Unit (px)</label>
+            <input id="unit" type="number" min="1" max="100" value="6" />
+          </div>
+          <div>
+            <label>Wall width (px)</label>
+            <input id="wallWidth" type="number" min="1" max="100" value="2" />
+          </div>
+          <div>
+            <label>Seed</label>
+            <input id="seed" type="text" value="42" />
+          </div>
+          <div class="row" style="align-items:flex-end;">
+            <button class="btn small" id="dice">🎲 random</button>
+          </div>
+          <div class="full row">
+            <button class="btn acc" id="genBtn">Generate Maze</button>
+            <button class="btn" id="savePng">Save Maze PNG</button>
+            <button class="btn" id="savePngSol">Save PNG + Solution</button>
+          </div>
+          <div class="full row">
+            <button class="btn good" id="saveSvg">Save SVG (walls only)</button>
+            <button class="btn good" id="saveSvgSol">Save SVG + Solution</button>
+          </div>
+        </div>
+      </div>
+      <div class="status" id="status">Ready.</div>
+    </section>
+
+    <!-- Right: Previews -->
+    <section class="card">
+      <h2>Preview</h2>
+      <div class="body">
+        <div class="split">
+          <div>
+            <h3 style="margin:0 0 8px; font-size:13px; color:var(--muted);">Maze</h3>
+            <canvas id="mazeCanvas" class="preview"></canvas>
+          </div>
+          <div>
+            <h3 style="margin:0 0 8px; font-size:13px; color:var(--muted);">Maze + Solution</h3>
+            <canvas id="solutionCanvas" class="preview"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+// ========================= Utilities =========================
+const $ = (id) => document.getElementById(id);
+function setStatus(msg) { $('status').textContent = msg; }
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+// Deterministic PRNG (mulberry32)
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return function() {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seededShuffle(arr, rng){
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+// Download helpers
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+function downloadText(filename, text) {
+  downloadBlob(filename, new Blob([text], {type:'image/svg+xml'}));
+}
+
+// Canvas helpers
+function ensureCanvasSize(canvas, w, h){
+  if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+}
+
+// ========================= Image to Mask =========================
+async function imageFileToCanvas(file) {
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  URL.revokeObjectURL(img.src);
+  return c;
+}
+
+function canvasToMask(canvas, threshold=128, invert=false){
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const imgData = ctx.getImageData(0,0,w,h);
+  const data = imgData.data;
+  const mask = new Uint8Array(w*h);
+  for (let y=0, i=0, p=0; y<h; y++){
+    for (let x=0; x<w; x++, p+=4, i++){
+      const r = data[p], g = data[p+1], b = data[p+2];
+      const L = Math.round(0.2126*r + 0.7152*g + 0.0722*b);
+      const on = invert ? (L > threshold) : (L < threshold);
+      mask[i] = on ? 1 : 0;
+    }
+  }
+  return {mask, w, h};
+}
+
+// ========================= Graph ops (grid) =========================
+function idx(x, y, w){ return y*w + x; }
+function inb(x, y, w, h){ return (x>=0 && y>=0 && x<w && y<h); }
+const N4 = [[1,0],[-1,0],[0,1],[0,-1]];
+
+function largestConnectedComponent(mask, w, h){
+  const visited = new Uint8Array(w*h);
+  let bestStart = -1, bestCount = 0;
+  const qx = new Int32Array(w*h), qy = new Int32Array(w*h);
+  for (let y=0; y<h; y++){
+    for (let x=0; x<w; x++){
+      const i = idx(x,y,w);
+      if (!mask[i] || visited[i]) continue;
+      // BFS
+      visited[i] = 1;
+      qx[0]=x; qy[0]=y; let qh=0, qt=1, count=1;
+      while(qh<qt){
+        const cx=qx[qh], cy=qy[qh]; qh++;
+        for (const [dx,dy] of N4){
+          const nx=cx+dx, ny=cy+dy; if(!inb(nx,ny,w,h)) continue;
+          const j=idx(nx,ny,w); if(!mask[j] || visited[j]) continue;
+          visited[j]=1; qx[qt]=nx; qy[qt]=ny; qt++; count++;
+        }
+      }
+      if (count>bestCount){ bestCount=count; bestStart=i; }
+    }
+  }
+  if (bestCount===0) return mask; // nothing to do
+  // second BFS to mark only best component
+  const out = new Uint8Array(w*h);
+  const sx = bestStart % w, sy = Math.floor(bestStart / w);
+  const qx2 = new Int32Array(w*h), qy2 = new Int32Array(w*h); let qh=0, qt=0;
+  qx2[qt]=sx; qy2[qt]=sy; qt++;
+  out[idx(sx,sy,w)] = 1;
+  while(qh<qt){
+    const cx=qx2[qh], cy=qy2[qh]; qh++;
+    for (const [dx,dy] of N4){
+      const nx=cx+dx, ny=cy+dy; if(!inb(nx,ny,w,h)) continue;
+      const j=idx(nx,ny,w); if(!mask[j] || out[j]) continue;
+      out[j]=1; qx2[qt]=nx; qy2[qt]=ny; qt++;
+    }
+  }
+  return out;
+}
+
+function bfs(mask, w, h, sx, sy){
+  const dist = new Int32Array(w*h); dist.fill(-1);
+  const prev = new Int32Array(w*h); prev.fill(-1);
+  const qx = new Int32Array(w*h), qy = new Int32Array(w*h); let qh=0, qt=0;
+  const s = idx(sx,sy,w); dist[s]=0; qx[qt]=sx; qy[qt]=sy; qt++;
+  while(qh<qt){
+    const x=qx[qh], y=qy[qh]; qh++;
+    for(const [dx,dy] of N4){
+      const nx=x+dx, ny=y+dy; if(!inb(nx,ny,w,h)) continue;
+      const j=idx(nx,ny,w); if(!mask[j] || dist[j]!==-1) continue;
+      dist[j]=dist[idx(x,y,w)]+1; prev[j]=idx(x,y,w);
+      qx[qt]=nx; qy[qt]=ny; qt++;
+    }
+  }
+  return {dist, prev};
+}
+
+function manhattanPath(ax, ay, bx, by){
+  const path = [[ax, ay]];
+  let x=ax, y=ay;
+  while (x!==bx){ x += (bx>x?1:-1); path.push([x,y]); }
+  while (y!==by){ y += (by>y?1:-1); path.push([x,y]); }
+  return path;
+}
+
+function findEndpoints(mask, w, h){
+  const coords = [];
+  for (let y=0;y<h;y++) for(let x=0;x<w;x++) if(mask[idx(x,y,w)]) coords.push([x,y]);
+  if (coords.length===0) throw new Error('No path pixels found in the mask.');
+  const deg1 = [];
+  for (const [x,y] of coords){
+    let d=0; for (const [dx,dy] of N4){ const nx=x+dx, ny=y+dy; if(inb(nx,ny,w,h) && mask[idx(nx,ny,w)]) d++; }
+    if (d===1) deg1.push([x,y]);
+  }
+  function farthestFrom(x,y, set){
+    const {dist} = bfs(mask,w,h,x,y);
+    let best=[x,y], bestd=-1;
+    for (const [px,py] of set){ const d = dist[idx(px,py,w)]; if (d>bestd){ bestd=d; best=[px,py]; } }
+    return best;
+  }
+  if (deg1.length>=2){
+    const s0 = deg1[0];
+    const a = farthestFrom(s0[0], s0[1], deg1);
+    const b = farthestFrom(a[0], a[1], deg1);
+    return {start:a, end:b};
+  } else {
+    const start0 = coords[0];
+    const {dist: d1} = bfs(mask,w,h,start0[0],start0[1]);
+    let Ai = 0, Abest=-1; for (let i=0;i<w*h;i++){ if(d1[i]>Abest){ Abest=d1[i]; Ai=i; } }
+    const Ax = Ai%w, Ay=(Ai/w)|0;
+    const {dist: d2} = bfs(mask,w,h,Ax,Ay);
+    let Bi=0, Bbest=-1; for (let i=0;i<w*h;i++){ if(d2[i]>Bbest){ Bbest=d2[i]; Bi=i; } }
+    const Bx = Bi%w, By=(Bi/w)|0;
+    return {start:[Ax,Ay], end:[Bx,By]};
+  }
+}
+
+function shortestPath(mask, w, h, sx, sy, ex, ey){
+  const {dist, prev} = bfs(mask,w,h,sx,sy);
+  const ei = idx(ex,ey,w);
+  if (dist[ei]===-1) return manhattanPath(sx,sy,ex,ey);
+  const path = [[ex,ey]]; let cur=ei;
+  while (cur!==idx(sx,sy,w)){
+    cur = prev[cur]; if (cur<0) break; path.push([cur%w, (cur/w)|0]);
+  }
+  path.reverse();
+  return path;
+}
+
+// DSU
+class DSU {
+  constructor(n){ this.p = new Int32Array(n); this.r = new Int32Array(n); for (let i=0;i<n;i++) this.p[i]=i; }
+  find(x){ while(this.p[x]!==x){ this.p[x]=this.p[this.p[x]]; x=this.p[x]; } return x; }
+  union(a,b){ a=this.find(a); b=this.find(b); if(a===b) return false; if(this.r[a]<this.r[b]) [a,b]=[b,a]; this.p[b]=a; if(this.r[a]===this.r[b]) this.r[a]++; return true; }
+}
+
+function buildMazeWithForcedPath(w, h, forcedPath, seed){
+  const n = w*h; const dsu = new DSU(n);
+  function id(x,y){ return y*w+x; }
+  const edges = new Set();
+  function addEdge(ax,ay,bx,by){
+    if (ax>bx || (ax===bx && ay>by)) { [ax,bx]=[bx,ax]; [ay,by]=[by,ay]; }
+    edges.add(`${ax},${ay}|${bx},${by}`);
+  }
+  // force path
+  for (let i=0;i<forcedPath.length-1;i++){
+    const [x1,y1] = forcedPath[i], [x2,y2] = forcedPath[i+1];
+    if (Math.abs(x1-x2)+Math.abs(y1-y2)!==1) continue;
+    if (dsu.union(id(x1,y1), id(x2,y2))) addEdge(x1,y1,x2,y2);
+  }
+  // all edges
+  const all = [];
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      if (x+1<w) all.push([x,y,x+1,y]);
+      if (y+1<h) all.push([x,y,x,y+1]);
+    }
+  }
+  const rng = mulberry32((seed==null?Math.random()*1e9:parseInt(seed,10))|0);
+  seededShuffle(all, rng);
+  for (const e of all){
+    const [x1,y1,x2,y2]=e; if (dsu.union(id(x1,y1), id(x2,y2))) addEdge(x1,y1,x2,y2);
+  }
+  // convert edges set -> array of pairs
+  const out=[]; edges.forEach(s=>{ const [a,b]=s.split('|'); const [ax,ay]=a.split(',').map(Number); const [bx,by]=b.split(',').map(Number); out.push([[ax,ay],[bx,by]]); });
+  return out;
+}
+
+function computeWalls(w, h, edges, startCell, endCell){
+  const vWalls = new Set(); // key: x,y  with x in [0..w], y in [0..h-1]
+  const hWalls = new Set(); // key: x,y  with y in [0..h], x in [0..w-1]
+  for (let x=0;x<=w;x++) for(let y=0;y<h;y++) vWalls.add(`${x},${y}`);
+  for (let y=0;y<=h;y++) for(let x=0;x<w;x++) hWalls.add(`${x},${y}`);
+
+  for (const [[x1,y1],[x2,y2]] of edges){
+    if (y1===y2){ // horizontal neighbors -> remove vertical wall between
+      const x = Math.min(x1,x2)+1, y=y1; vWalls.delete(`${x},${y}`);
+    } else if (x1===x2){ // vertical neighbors -> remove horizontal wall between
+      const y = Math.min(y1,y2)+1, x=x1; hWalls.delete(`${x},${y}`);
+    }
+  }
+  function carveOpening(cx, cy){
+    const cand = [
+      [cy, 'top', [cx,0]],
+      [h-1-cy, 'bottom', [cx,h]],
+      [cx, 'left', [0,cy]],
+      [w-1-cx, 'right', [w,cy]],
+    ];
+    cand.sort((a,b)=>a[0]-b[0]);
+    const [_, side, pos] = cand[0];
+    if (side==='top' || side==='bottom'){
+      const [x,y]=pos; hWalls.delete(`${x},${y}`);
+    } else {
+      const [x,y]=pos; vWalls.delete(`${x},${y}`);
+    }
+  }
+  carveOpening(startCell[0], startCell[1]);
+  carveOpening(endCell[0], endCell[1]);
+
+  return {vWalls, hWalls};
+}
+
+// ========================= Rendering =========================
+function renderMazeToCanvas(canvas, w, h, vWalls, hWalls, unit=6, wallWidth=2){
+  const W = w*unit, H = h*unit; ensureCanvasSize(canvas, W+1, H+1);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle = '#000000'; ctx.lineWidth = Math.max(1, wallWidth|0); ctx.lineCap='butt'; ctx.lineJoin='miter';
+  // Vertical walls
+  for (const key of vWalls){ const [x,y]=key.split(',').map(Number); const xpix=Math.round(x*unit), y1=Math.round(y*unit), y2=Math.round((y+1)*unit);
+    ctx.beginPath(); ctx.moveTo(xpix,y1); ctx.lineTo(xpix,y2); ctx.stroke(); }
+  // Horizontal walls
+  for (const key of hWalls){ const [x,y]=key.split(',').map(Number); const ypix=Math.round(y*unit), x1=Math.round(x*unit), x2=Math.round((x+1)*unit);
+    ctx.beginPath(); ctx.moveTo(x1,ypix); ctx.lineTo(x2,ypix); ctx.stroke(); }
+}
+
+function drawSolutionOnCanvas(canvas, forcedPath, unit=6, width){
+  if (!forcedPath || forcedPath.length<2) return;
+  const ctx = canvas.getContext('2d');
+  const sw = (width==null? Math.max(1, Math.round(unit*0.6)) : width);
+  ctx.strokeStyle = '#808080'; ctx.lineWidth = sw; ctx.lineJoin='round'; ctx.lineCap='round';
+  const pts = [];
+  for (let i=0;i<forcedPath.length-1;i++){
+    const [x1,y1] = forcedPath[i], [x2,y2] = forcedPath[i+1];
+    if (Math.abs(x1-x2)+Math.abs(y1-y2)!==1) continue;
+    const cx1=(x1+0.5)*unit, cy1=(y1+0.5)*unit, cx2=(x2+0.5)*unit, cy2=(y2+0.5)*unit;
+    if (pts.length===0) pts.push([cx1,cy1]);
+    if (x2===x1+1) pts.push([(x1+1)*unit, (y1+0.5)*unit]);
+    else if (x2===x1-1) pts.push([x1*unit, (y1+0.5)*unit]);
+    else if (y2===y1+1) pts.push([(x1+0.5)*unit, (y1+1)*unit]);
+    else if (y2===y1-1) pts.push([(x1+0.5)*unit, y1*unit]);
+    pts.push([cx2,cy2]);
+  }
+  if (pts.length>=2){
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+}
+
+function wallsToSvgPath(vWalls, hWalls, w, h, unit=6, wallWidth=2){
+  const width = w*unit, height = h*unit;
+  const segs = [];
+  // group vertical by x
+  const byX = new Map();
+  for (const key of vWalls){ const [x,y]=key.split(',').map(Number); if(!byX.has(x)) byX.set(x, []); byX.get(x).push(y); }
+  for (const [x, ys] of byX){ ys.sort((a,b)=>a-b); let runStart=ys[0], prev=ys[0];
+    for (let i=1;i<ys.length;i++){ const yy=ys[i]; if (yy===prev+1){ prev=yy; } else { const xpix=x*unit, y1=runStart*unit, y2=(prev+1)*unit; segs.push(`M ${xpix.toFixed(3)} ${y1.toFixed(3)} L ${xpix.toFixed(3)} ${y2.toFixed(3)}`); runStart=yy; prev=yy; } }
+    const xpix=x*unit, y1=runStart*unit, y2=(prev+1)*unit; segs.push(`M ${xpix.toFixed(3)} ${y1.toFixed(3)} L ${xpix.toFixed(3)} ${y2.toFixed(3)}`);
+  }
+  // group horizontal by y
+  const byY = new Map();
+  for (const key of hWalls){ const [x,y]=key.split(',').map(Number); if(!byY.has(y)) byY.set(y, []); byY.get(y).push(x); }
+  for (const [y, xs] of byY){ xs.sort((a,b)=>a-b); let runStart=xs[0], prev=xs[0];
+    for (let i=1;i<xs.length;i++){ const xx=xs[i]; if (xx===prev+1){ prev=xx; } else { const ypix=y*unit, x1=runStart*unit, x2=(prev+1)*unit; segs.push(`M ${x1.toFixed(3)} ${ypix.toFixed(3)} L ${x2.toFixed(3)} ${ypix.toFixed(3)}`); runStart=xx; prev=xx; } }
+    const ypix=y*unit, x1=runStart*unit, x2=(prev+1)*unit; segs.push(`M ${x1.toFixed(3)} ${ypix.toFixed(3)} L ${x2.toFixed(3)} ${ypix.toFixed(3)}`);
+  }
+  const d = segs.join(' ');
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`,
+    `<path id="walls" d="${d}" fill="none" stroke="#000000" stroke-width="${(+wallWidth).toFixed(3)}" stroke-linecap="square" stroke-linejoin="miter"/>`,
+    `</svg>`
+  ].join('\n');
+  return svg;
+}
+
+function solutionPolylineSvg(forcedPath, unit){
+  if (!forcedPath || forcedPath.length<2) return '';
+  const pts=[];
+  for (let i=0;i<forcedPath.length-1;i++){
+    const [x1,y1] = forcedPath[i], [x2,y2] = forcedPath[i+1];
+    if (Math.abs(x1-x2)+Math.abs(y1-y2)!==1) continue;
+    const cx1=(x1+0.5)*unit, cy1=(y1+0.5)*unit, cx2=(x2+0.5)*unit, cy2=(y2+0.5)*unit;
+    if (pts.length===0) pts.push([cx1,cy1]);
+    if (x2===x1+1) pts.push([(x1+1)*unit, (y1+0.5)*unit]);
+    else if (x2===x1-1) pts.push([x1*unit, (y1+0.5)*unit]);
+    else if (y2===y1+1) pts.push([(x1+0.5)*unit, (y1+1)*unit]);
+    else if (y2===y1-1) pts.push([(x1+0.5)*unit, y1*unit]);
+    pts.push([cx2,cy2]);
+  }
+  const strokeW = Math.max(1, unit*0.6).toFixed(3);
+  const points = pts.map(p=>`${p[0].toFixed(3)},${p[1].toFixed(3)}`).join(' ');
+  return `<g id="solution" fill="none" stroke="#808080" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"><polyline points="${points}"/></g>`;
+}
+
+// ========================= Orchestration =========================
+async function computeFromActiveSource(){
+  const threshold = +$('threshold').value|0;
+  const invert = $('invert').checked;
+  const keepLargest = $('keepLargest').checked;
+  const activeTab = (document.querySelector('#tab-upload').classList.contains('active')) ? 'upload' : 'draw';
+
+  let sourceCanvas = null;
+  if (activeTab==='upload'){
+    const f = $('fileInput').files[0];
+    if (!f) throw new Error('Please choose an image file.');
+    sourceCanvas = await imageFileToCanvas(f);
+  } else {
+    sourceCanvas = $('drawCanvas');
+  }
+  // produce mask
+  let {mask, w, h} = canvasToMask(sourceCanvas, threshold, invert);
+  if (keepLargest) mask = largestConnectedComponent(mask, w, h);
+
+  // endpoints & forced path
+  const {start, end} = findEndpoints(mask, w, h); // [x,y]
+  const forcedPath = shortestPath(mask, w, h, start[0], start[1], end[0], end[1]);
+
+  // maze edges
+  const seedStr = $('seed').value.trim();
+  const edges = buildMazeWithForcedPath(w, h, forcedPath, seedStr ? parseInt(seedStr,10) : null);
+
+  return {mask, w, h, start, end, forcedPath, edges};
+}
+
+function buildAndRender(comp){
+  const unit = clamp(+$('unit').value, 1, 100);
+  const wallWidth = clamp(+$('wallWidth').value, 1, 200);
+  const {w, h, edges, start, end, forcedPath} = comp;
+  const {vWalls, hWalls} = computeWalls(w, h, edges, start, end);
+
+  // Render PNG previews
+  renderMazeToCanvas($('mazeCanvas'), w, h, vWalls, hWalls, unit, wallWidth);
+  renderMazeToCanvas($('solutionCanvas'), w, h, vWalls, hWalls, unit, wallWidth);
+  drawSolutionOnCanvas($('solutionCanvas'), forcedPath, unit, Math.round(unit*0.6));
+
+  // Keep for exports
+  window.__maze_state__ = { w, h, vWalls, hWalls, forcedPath, unit, wallWidth };
+}
+
+// ========================= UI Wiring =========================
+(function init(){
+  // Tabs
+  $('tab-upload').addEventListener('click', ()=>{
+    $('tab-upload').classList.add('active'); $('tab-draw').classList.remove('active');
+    $('upload-section').style.display='block'; $('draw-section').style.display='none';
+  });
+  $('tab-draw').addEventListener('click', ()=>{
+    $('tab-draw').classList.add('active'); $('tab-upload').classList.remove('active');
+    $('upload-section').style.display='none'; $('draw-section').style.display='block';
+  });
+
+  // Draw canvas interactions
+  const dcan = $('drawCanvas'); let drawing=false; let erase=false;
+  function setCanvasSize(){
+    const w = clamp(+$('drawWidth').value, 10, 500)|0;
+    const h = clamp(+$('drawHeight').value, 10, 500)|0;
+    dcan.width = w; dcan.height = h; const ctx = dcan.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,w,h); // start white
+  }
+  setCanvasSize();
+  $('drawWidth').addEventListener('change', setCanvasSize);
+  $('drawHeight').addEventListener('change', setCanvasSize);
+  $('modeDraw').addEventListener('click', (e)=>{ e.preventDefault(); erase=false; setStatus('Mode: draw'); });
+  $('modeErase').addEventListener('click', (e)=>{ e.preventDefault(); erase=true; setStatus('Mode: erase'); });
+  $('clearCanvas').addEventListener('click', (e)=>{ e.preventDefault(); const ctx=dcan.getContext('2d'); ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,dcan.width,dcan.height); });
+
+  function drawAt(x,y){
+    const ctx=dcan.getContext('2d'); const r=clamp(+$('brushSize').value,1,50);
+    ctx.fillStyle = erase ? '#ffffff' : '#000000';
+    ctx.beginPath(); ctx.arc(x, y, r/2, 0, Math.PI*2); ctx.fill();
+  }
+  function getXY(ev){
+    const rect=dcan.getBoundingClientRect(); const scaleX=dcan.width/rect.width, scaleY=dcan.height/rect.height;
+    const clientX=ev.touches?ev.touches[0].clientX:ev.clientX; const clientY=ev.touches?ev.touches[0].clientY:ev.clientY;
+    return [(clientX-rect.left)*scaleX, (clientY-rect.top)*scaleY];
+  }
+  dcan.addEventListener('pointerdown', (e)=>{ drawing=true; dcan.setPointerCapture(e.pointerId); const [x,y]=getXY(e); drawAt(x,y); });
+  dcan.addEventListener('pointermove', (e)=>{ if(!drawing) return; const [x,y]=getXY(e); drawAt(x,y); });
+  const stop=()=>{ drawing=false; };
+  dcan.addEventListener('pointerup', stop); dcan.addEventListener('pointercancel', stop); dcan.addEventListener('pointerleave', stop);
+
+  // Seed dice
+  $('dice').addEventListener('click', (e)=>{ e.preventDefault(); $('seed').value = (Math.random()*2_147_483_647|0).toString(); });
+
+  // Generate
+  $('genBtn').addEventListener('click', async ()=>{
+    setStatus('Processing…');
+    try {
+      const comp = await computeFromActiveSource();
+      buildAndRender(comp);
+      setStatus(`Maze generated. Grid: ${comp.w}×${comp.h}.`);
+    } catch(err){
+      console.error(err); setStatus('Error: '+err.message);
+    }
+  });
+
+  // Save PNGs
+  function saveCanvasAsPNG(canvas, filename){ canvas.toBlob(b=>downloadBlob(filename,b), 'image/png'); }
+  $('savePng').addEventListener('click', ()=>{
+    const S = window.__maze_state__; if(!S) return setStatus('Generate a maze first.');
+    saveCanvasAsPNG($('mazeCanvas'), 'maze.png');
+  });
+  $('savePngSol').addEventListener('click', ()=>{
+    const S = window.__maze_state__; if(!S) return setStatus('Generate a maze first.');
+    saveCanvasAsPNG($('solutionCanvas'), 'maze_solution.png');
+  });
+
+  // Save SVGs
+  $('saveSvg').addEventListener('click', ()=>{
+    const S = window.__maze_state__; if(!S) return setStatus('Generate a maze first.');
+    const svg = wallsToSvgPath(S.vWalls, S.hWalls, S.w, S.h, S.unit, S.wallWidth);
+    downloadText('maze.svg', svg);
+  });
+  $('saveSvgSol').addEventListener('click', ()=>{
+    const S = window.__maze_state__; if(!S) return setStatus('Generate a maze first.');
+    const base = wallsToSvgPath(S.vWalls, S.hWalls, S.w, S.h, S.unit, S.wallWidth);
+    const sol = solutionPolylineSvg(S.forcedPath, S.unit);
+    const svg = base.replace('</svg>', sol+'\n</svg>');
+    downloadText('maze_with_solution.svg', svg);
+  });
+})();
+</script>
+</body>
+</html>
