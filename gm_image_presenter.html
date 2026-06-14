@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GM Image Presenter</title>
+    <style id="main-styles">
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #121212;
+            overflow: hidden; /* Prevents any scrolling */
+            font-family: sans-serif;
+        }
+
+        #container {
+            display: grid;
+            width: 100%;
+            height: 100%;
+            gap: 10px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .grid-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Keeps aspect ratio intact */
+            
+            /* Forces images to shrink to fit the grid cells */
+            min-width: 0;
+            min-height: 0;
+            
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        .grid-image:hover {
+            transform: scale(1.02);
+        }
+
+        /* Prevent clicking/hovering in the mirror window */
+        .mirror .grid-image {
+            cursor: default;
+            transform: none !important;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            z-index: 100;
+        }
+
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        #drag-hint {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #555;
+            font-size: 24px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <button onclick="openSecondWindow()">Open 2nd Window</button>
+    </div>
+
+    <div id="drag-hint">Drag & Drop Images Here</div>
+    
+    <div id="container"></div>
+
+    <script>
+        const container = document.getElementById('container');
+        const dragHint = document.getElementById('drag-hint');
+        let secondWindow = null;
+
+        // --- Layout & Sync Logic ---
+
+        function updateLayout() {
+            const count = container.children.length;
+            
+            // Hide hint if images exist
+            dragHint.style.display = count > 0 ? 'none' : 'block';
+
+            if (count > 0) {
+                // Calculate optimal rows and columns to share space evenly
+                const cols = Math.ceil(Math.sqrt(count));
+                const rows = Math.ceil(count / cols);
+                
+                container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                container.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+            }
+
+            syncSecondWindow();
+        }
+
+        function syncSecondWindow() {
+            if (secondWindow && !secondWindow.closed) {
+                const mirrorContainer = secondWindow.document.getElementById('container');
+                if (mirrorContainer) {
+                    // Copy the exact HTML into the second window's container
+                    mirrorContainer.innerHTML = container.innerHTML;
+                    // Apply the exact same grid layout styles
+                    mirrorContainer.style.gridTemplateColumns = container.style.gridTemplateColumns;
+                    mirrorContainer.style.gridTemplateRows = container.style.gridTemplateRows;
+                }
+            }
+        }
+
+        function openSecondWindow() {
+            if (secondWindow && !secondWindow.closed) {
+                secondWindow.focus();
+                return;
+            }
+
+            // Open a blank window
+            secondWindow = window.open('', 'ImageGridMirror', 'width=800,height=600');
+            
+            // Grab the CSS from this main file to style the pop-up
+            const styles = document.getElementById('main-styles').innerHTML;
+
+            // Write the HTML skeleton, CSS, and Fullscreen Logic to the new window
+            // Note: The script tag closing bracket is escaped so it doesn't break the main file
+            secondWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Image Grid (Display)</title>
+                    <style>
+                        ${styles}
+                        
+                        /* Styles specifically for the second window's fullscreen button */
+                        #mirror-ui {
+                            position: absolute;
+                            bottom: 20px;
+                            right: 20px;
+                            opacity: 0;
+                            transition: opacity 0.3s ease;
+                            z-index: 1000;
+                        }
+
+                        /* Reveal the button when mouse is over the window body */
+                        body:hover #mirror-ui {
+                            opacity: 1;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div id="mirror-ui">
+                        <button onclick="toggleFullScreen()">Toggle Fullscreen</button>
+                    </div>
+                    <div id="container" class="mirror"></div>
+                    
+                    <script>
+                        function toggleFullScreen() {
+                            if (!document.fullscreenElement) {
+                                document.documentElement.requestFullscreen().catch(err => {
+                                    alert(\`Error attempting to enable fullscreen: \${err.message}\`);
+                                });
+                            } else {
+                                if (document.exitFullscreen) {
+                                    document.exitFullscreen();
+                                }
+                            }
+                        }
+                    <\/script>
+                </body>
+                </html>
+            `);
+            secondWindow.document.close();
+
+            // Run an initial sync
+            setTimeout(syncSecondWindow, 100);
+        }
+
+        // --- Drag & Drop Logic ---
+
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Necessary to allow dropping
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            
+            const files = e.dataTransfer.files;
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                
+                // Only process image files
+                if (!file.type.startsWith('image/')) continue;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = document.createElement('img');
+                    img.src = event.target.result;
+                    img.className = 'grid-image';
+                    
+                    // Click to remove functionality
+                    img.onclick = function() {
+                        this.remove();
+                        updateLayout();
+                    };
+
+                    container.appendChild(img);
+                    updateLayout();
+                };
+                
+                // Read local file into base64 data URL
+                reader.readAsDataURL(file);
+            }
+        });
+    </script>
+</body>
+</html>
