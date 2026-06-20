@@ -11,7 +11,7 @@
             width: 100vw;
             height: 100vh;
             background-color: #121212;
-            overflow: hidden; /* Prevents any scrolling */
+            overflow: hidden;
             font-family: sans-serif;
         }
 
@@ -22,17 +22,16 @@
             gap: 10px;
             padding: 10px;
             box-sizing: border-box;
+            position: relative;
+            z-index: 10;
         }
 
         .grid-image {
             width: 100%;
             height: 100%;
-            object-fit: contain; /* Keeps aspect ratio intact */
-            
-            /* Forces images to shrink to fit the grid cells */
+            object-fit: contain;
             min-width: 0;
             min-height: 0;
-            
             cursor: pointer;
             transition: transform 0.1s ease;
         }
@@ -41,7 +40,6 @@
             transform: scale(1.02);
         }
 
-        /* Prevent clicking/hovering in the mirror window */
         .mirror .grid-image {
             cursor: default;
             transform: none !important;
@@ -52,6 +50,9 @@
             top: 15px;
             left: 15px;
             z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
         button {
@@ -77,38 +78,275 @@
             transform: translate(-50%, -50%);
             color: #555;
             font-size: 24px;
+            font-weight: bold;
+            text-align: center;
             pointer-events: none;
+            z-index: 5;
+        }
+
+        .hint-subtext {
+            display: block;
+            font-size: 16px;
+            font-weight: normal;
+            color: #888;
+            margin-top: 10px;
+        }
+
+        .draw-controls {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(40, 40, 40, 0.8);
+            padding: 5px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .draw-controls input[type="color"] {
+            cursor: pointer;
+            padding: 0;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 4px;
+            background: none;
+        }
+
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 50;
+            pointer-events: none;
+        }
+
+        #overlay-canvas.active {
+            pointer-events: auto;
+            cursor: crosshair;
         }
     </style>
 </head>
 <body>
 
     <div id="ui-layer">
-        <button onclick="openSecondWindow()">Open 2nd Window</button>
+        <button onclick="openSecondWindow(event)">Open 2nd Window</button>
+        <button id="open-btn" onclick="document.getElementById('file-input').click();">📁 Open Images</button>
+        <input type="file" id="file-input" multiple accept="image/*" style="display:none;" onchange="handleFileSelect(event)">
+        
+        <div class="draw-controls" style="margin-left: 5px;">
+            <button id="toggle-draw" title="Toggle Brush">🖌️ Draw</button>
+            <input type="color" id="color-picker" title="Brush Color">
+            <input type="range" id="brush-size" min="1" max="50" value="5" title="Brush Size">
+            <button id="clear-gm-btn" title="Clear only your screen">Clear GM 🎨</button>
+            <button id="clear-player-btn" title="Clear only the player screen">Clear Player 🎨</button>
+
+        </div>
     </div>
 
-    <div id="drag-hint">Drag & Drop Images Here</div>
+    <div id="drag-hint">
+        Drag &amp; Drop (or Open) Images Here
+        <span class="hint-subtext">Double-click an image to remove it</span>
+    </div>
     
     <div id="container"></div>
+    <canvas id="overlay-canvas"></canvas>
 
     <script>
         const container = document.getElementById('container');
         const dragHint = document.getElementById('drag-hint');
         let secondWindow = null;
 
+        // --- Core Image Loading Logic ---
+
+        function processImageFiles(files) {
+            console.log(`[File Process] Attempting to load ${files.length} file(s).`);
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (!file.type.startsWith('image/')) continue;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = document.createElement('img');
+                    img.src = event.target.result;
+                    img.className = 'grid-image';
+                    
+                    img.ondblclick = function(e) {
+                        e.stopPropagation();
+                        this.remove();
+                        updateLayout();
+                    };
+
+                    container.appendChild(img);
+                    updateLayout();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files && files.length > 0) processImageFiles(files);
+            e.target.value = ''; 
+        }
+
+        // --- Drawing Logic ---
+
+        function setupCanvas(targetWindow, isGM) {
+            const doc = targetWindow.document;
+            const canvas = doc.getElementById('overlay-canvas');
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            let isDrawing = false;
+            let lastX = 0, lastY = 0;
+
+            function resize() {
+                let temp = null;
+                if (canvas.width > 0 && canvas.height > 0) {
+                    temp = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                }
+                canvas.width = targetWindow.innerWidth;
+                canvas.height = targetWindow.innerHeight;
+                if (temp) ctx.putImageData(temp, 0, 0);
+            }
+            targetWindow.addEventListener('resize', resize);
+            resize(); 
+
+            const colorPicker = doc.getElementById('color-picker');
+            const sizePicker = doc.getElementById('brush-size');
+            const toggleBtn = doc.getElementById('toggle-draw');
+            
+            // GM specific buttons
+            const clearGmBtn = doc.getElementById('clear-gm-btn');
+            const clearPlayerBtn = doc.getElementById('clear-player-btn');
+            const remoteFsBtn = doc.getElementById('remote-fs-btn');
+            
+            // Player specific button
+            const playerClearBtn = doc.getElementById('clear-btn');
+
+            if (colorPicker) {
+                colorPicker.value = isGM ? "#ff0000" : "#0088ff"; 
+            }
+
+            function drawLine(x0, y0, x1, y1, color, size, emit) {
+                ctx.beginPath();
+                ctx.moveTo(x0, y0);
+                ctx.lineTo(x1, y1);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = size;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+
+                if (emit) {
+                    if (isGM && secondWindow && !secondWindow.closed) {
+                        // Fixed: We use secondWindow directly here
+                        if (secondWindow.drawRemoteLine) {
+                            secondWindow.drawRemoteLine(x0, y0, x1, y1, color, size);
+                        }
+                    } else if (!isGM) {
+                        // Fixed: Player targets the main window directly
+                        if (window.drawRemoteLine) {
+                            window.drawRemoteLine(x0, y0, x1, y1, color, size);
+                        }
+                    }
+                }
+            }
+
+            targetWindow.drawRemoteLine = function(x0, y0, x1, y1, color, size) {
+                drawLine(x0, y0, x1, y1, color, size, false);
+            };
+
+            targetWindow.clearRemoteCanvas = function() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            };
+
+            targetWindow.loadCanvasData = function(dataURL) {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                };
+                img.src = dataURL;
+            };
+
+            // UI Listeners
+            if (toggleBtn) {
+                toggleBtn.onclick = function(e) {
+                    e.stopPropagation(); 
+                    canvas.classList.toggle('active');
+                    toggleBtn.style.backgroundColor = canvas.classList.contains('active') ? '#28a745' : ''; 
+                };
+            }
+
+            // GM Clear Buttons
+            if (clearGmBtn) {
+                clearGmBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                };
+            }
+
+            if (clearPlayerBtn) {
+                clearPlayerBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    // Fixed scoping
+                    if (isGM && secondWindow && !secondWindow.closed && secondWindow.clearRemoteCanvas) {
+                        secondWindow.clearRemoteCanvas();
+                    }
+                };
+            }
+
+            // Remote Fullscreen Trigger
+            if (remoteFsBtn) {
+                remoteFsBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    // Fixed scoping
+                    if (isGM && secondWindow && !secondWindow.closed && secondWindow.triggerFullscreen) {
+                        secondWindow.triggerFullscreen();
+                    }
+                };
+            }
+
+            // Player Clear Button (Only on player window)
+            if (playerClearBtn) {
+                playerClearBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                };
+            }
+
+            // Mouse interaction for drawing
+            canvas.addEventListener('mousedown', (e) => {
+                isDrawing = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (!isDrawing) return;
+                const color = colorPicker ? colorPicker.value : (isGM ? '#ff0000' : '#0088ff');
+                const size = sizePicker ? sizePicker.value : 5;
+                drawLine(lastX, lastY, e.clientX, e.clientY, color, size, true);
+                lastX = e.clientX;
+                lastY = e.clientY;
+            });
+
+            canvas.addEventListener('mouseup', () => isDrawing = false);
+            canvas.addEventListener('mouseout', () => isDrawing = false);
+        }
+
+        setupCanvas(window, true);
+
         // --- Layout & Sync Logic ---
 
         function updateLayout() {
             const count = container.children.length;
-            
-            // Hide hint if images exist
             dragHint.style.display = count > 0 ? 'none' : 'block';
 
             if (count > 0) {
-                // Calculate optimal rows and columns to share space evenly
                 const cols = Math.ceil(Math.sqrt(count));
                 const rows = Math.ceil(count / cols);
-                
                 container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
                 container.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
             }
@@ -120,29 +358,23 @@
             if (secondWindow && !secondWindow.closed) {
                 const mirrorContainer = secondWindow.document.getElementById('container');
                 if (mirrorContainer) {
-                    // Copy the exact HTML into the second window's container
                     mirrorContainer.innerHTML = container.innerHTML;
-                    // Apply the exact same grid layout styles
                     mirrorContainer.style.gridTemplateColumns = container.style.gridTemplateColumns;
                     mirrorContainer.style.gridTemplateRows = container.style.gridTemplateRows;
                 }
             }
         }
 
-        function openSecondWindow() {
+        function openSecondWindow(e) {
+            if (e) e.stopPropagation();
             if (secondWindow && !secondWindow.closed) {
                 secondWindow.focus();
                 return;
             }
 
-            // Open a blank window
             secondWindow = window.open('', 'ImageGridMirror', 'width=800,height=600');
-            
-            // Grab the CSS from this main file to style the pop-up
             const styles = document.getElementById('main-styles').innerHTML;
 
-            // Write the HTML skeleton, CSS, and Fullscreen Logic to the new window
-            // Note: The script tag closing bracket is escaped so it doesn't break the main file
             secondWindow.document.write(`
                 <!DOCTYPE html>
                 <html>
@@ -151,33 +383,47 @@
                     <style>
                         ${styles}
                         
-                        /* Styles specifically for the second window's fullscreen button */
                         #mirror-ui {
                             position: absolute;
                             bottom: 20px;
-                            right: 20px;
+                            left: 20px;
                             opacity: 0;
+                            pointer-events: none;
                             transition: opacity 0.3s ease;
                             z-index: 1000;
+                            display: flex;
+                            align-items: center;
+                            gap: 15px;
                         }
 
-                        /* Reveal the button when mouse is over the window body */
-                        body:hover #mirror-ui {
+                        html:hover #mirror-ui {
                             opacity: 1;
+                            pointer-events: auto;
                         }
                     </style>
                 </head>
                 <body>
                     <div id="mirror-ui">
-                        <button onclick="toggleFullScreen()">Toggle Fullscreen</button>
+                        <button onclick="triggerFullscreen(event)">Toggle Fullscreen</button>
+                        
+                        <div class="draw-controls">
+                            <button id="toggle-draw" title="Toggle Brush">🖌️ Draw</button>
+                            <input type="color" id="color-picker" title="Brush Color">
+                            <input type="range" id="brush-size" min="1" max="50" value="5" title="Brush Size">
+                            <button id="clear-btn" title="Clear Player Drawing">🗑️ Clear</button>
+                        </div>
                     </div>
+                    
                     <div id="container" class="mirror"></div>
+                    <canvas id="overlay-canvas"></canvas>
                     
                     <script>
-                        function toggleFullScreen() {
+                        function triggerFullscreen(e) {
+                            if (e) e.stopPropagation();
                             if (!document.fullscreenElement) {
                                 document.documentElement.requestFullscreen().catch(err => {
-                                    alert(\`Error attempting to enable fullscreen: \${err.message}\`);
+                                    console.warn(\`Browser blocked fullscreen attempt: \${err.message}\`);
+                                    alert("Your browser blocked the remote fullscreen request. Click 'Toggle Fullscreen' locally on this player window instead.");
                                 });
                             } else {
                                 if (document.exitFullscreen) {
@@ -191,47 +437,30 @@
             `);
             secondWindow.document.close();
 
-            // Run an initial sync
-            setTimeout(syncSecondWindow, 100);
+            setTimeout(() => {
+                setupCanvas(secondWindow, false);
+                syncSecondWindow();
+
+                const mainCanvas = document.getElementById('overlay-canvas');
+                if (mainCanvas && secondWindow.loadCanvasData) {
+                    secondWindow.loadCanvasData(mainCanvas.toDataURL());
+                }
+            }, 50);
         }
 
-        // --- Drag & Drop Logic ---
+        // --- Bulletproof Drag & Drop Logic ---
 
-        window.addEventListener('dragover', (e) => {
-            e.preventDefault(); // Necessary to allow dropping
-            e.dataTransfer.dropEffect = 'copy';
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            document.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            }, false);
         });
 
-        window.addEventListener('drop', (e) => {
-            e.preventDefault();
-            
+        document.addEventListener('drop', (e) => {
             const files = e.dataTransfer.files;
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                
-                // Only process image files
-                if (!file.type.startsWith('image/')) continue;
-
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const img = document.createElement('img');
-                    img.src = event.target.result;
-                    img.className = 'grid-image';
-                    
-                    // Click to remove functionality
-                    img.onclick = function() {
-                        this.remove();
-                        updateLayout();
-                    };
-
-                    container.appendChild(img);
-                    updateLayout();
-                };
-                
-                // Read local file into base64 data URL
-                reader.readAsDataURL(file);
-            }
-        });
+            if (files && files.length > 0) processImageFiles(files);
+        }, false);
     </script>
 </body>
 </html>
