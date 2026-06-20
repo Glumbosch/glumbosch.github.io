@@ -10,9 +10,21 @@
             padding: 0;
             width: 100vw;
             height: 100vh;
-            background-color: #121212;
+            background-color: #000000; /* Letterbox background color */
             overflow: hidden;
             font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* The scalable area that maintains aspect ratio */
+        #workspace {
+            position: relative;
+            background-color: #121212;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
         }
 
         #container {
@@ -22,7 +34,9 @@
             gap: 10px;
             padding: 10px;
             box-sizing: border-box;
-            position: relative;
+            position: absolute;
+            top: 0;
+            left: 0;
             z-index: 10;
         }
 
@@ -33,18 +47,13 @@
             min-width: 0;
             min-height: 0;
             cursor: pointer;
-            transition: transform 0.1s ease;
-        }
-
-        .grid-image:hover {
-            transform: scale(1.02);
         }
 
         .mirror .grid-image {
             cursor: default;
-            transform: none !important;
         }
 
+        /* UI layer remains absolute to the top-left of the actual screen, not the workspace */
         #ui-layer {
             position: absolute;
             top: 15px;
@@ -55,7 +64,7 @@
             gap: 10px;
         }
 
-        button {
+        button, select {
             padding: 10px 15px;
             background-color: #007bff;
             color: white;
@@ -66,8 +75,14 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
             transition: background-color 0.2s;
         }
+        
+        select {
+            background-color: #333;
+            border: 1px solid #555;
+            padding: 9px 15px;
+        }
 
-        button:hover {
+        button:hover, select:hover {
             background-color: #0056b3;
         }
         
@@ -82,6 +97,7 @@
             text-align: center;
             pointer-events: none;
             z-index: 5;
+            width: 100%;
         }
 
         .hint-subtext {
@@ -112,15 +128,17 @@
             background: none;
         }
 
-        #overlay-canvas {
+        #overlay-canvas, #ping-canvas {
             position: absolute;
             top: 0;
             left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: 50;
+            width: 100%;
+            height: 100%;
             pointer-events: none;
         }
+
+        #overlay-canvas { z-index: 50; }
+        #ping-canvas { z-index: 60; }
 
         #overlay-canvas.active {
             pointer-events: auto;
@@ -136,32 +154,54 @@
         <input type="file" id="file-input" multiple accept="image/*" style="display:none;" onchange="handleFileSelect(event)">
         
         <div class="draw-controls" style="margin-left: 5px;">
+            <select id="aspect-ratio-select" title="Lock the aspect ratio of the map screen">
+                <option value="none">🔓 Ratio Unlocked</option>
+                <option value="16:9">📺 16:9 (Widescreen)</option>
+                <option value="16:10">💻 16:10 (Laptop)</option>
+                <option value="4:3">🖥️ 4:3 (Classic)</option>
+                <option value="1:1">⬛ 1:1 (Square Grid)</option>
+            </select>
+        
             <button id="toggle-draw" title="Toggle Brush">🖌️ Draw</button>
+            <button id="toggle-erase" title="Toggle Eraser">🧽 Erase</button>
             <input type="color" id="color-picker" title="Brush Color">
             <input type="range" id="brush-size" min="1" max="50" value="5" title="Brush Size">
             <button id="clear-gm-btn" title="Clear only your screen">Clear GM 🎨</button>
             <button id="clear-player-btn" title="Clear only the player screen">Clear Player 🎨</button>
-
         </div>
     </div>
 
-    <div id="drag-hint">
-        Drag &amp; Drop (or Open) Images Here
-        <span class="hint-subtext">Double-click an image to remove it</span>
+    <div id="workspace">
+        <div id="drag-hint">
+            Drag &amp; Drop (or Open) Images Here
+            <span class="hint-subtext">Double-click an image to remove it</span>
+        </div>
+        
+        <div id="container"></div>
+        <canvas id="overlay-canvas"></canvas>
+        <canvas id="ping-canvas"></canvas>
     </div>
-    
-    <div id="container"></div>
-    <canvas id="overlay-canvas"></canvas>
 
     <script>
         const container = document.getElementById('container');
         const dragHint = document.getElementById('drag-hint');
         let secondWindow = null;
+        let globalAspectRatio = 'none'; // Shared state
+
+        // --- Helper: Convert Hex color to RGB for opacity animations ---
+        function hexToRgb(hex) {
+            var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+            hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+                return r + r + g + g + b + b;
+            });
+            var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? 
+                `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` 
+                : '255, 0, 0';
+        }
 
         // --- Core Image Loading Logic ---
-
         function processImageFiles(files) {
-            console.log(`[File Process] Attempting to load ${files.length} file(s).`);
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 if (!file.type.startsWith('image/')) continue;
@@ -191,46 +231,183 @@
             e.target.value = ''; 
         }
 
-        // --- Drawing Logic ---
+        // --- Aspect Ratio Logic ---
+        function applyAspectRatio(targetWindow, ratioStr) {
+            const doc = targetWindow.document;
+            const ws = doc.getElementById('workspace');
+            if (!ws) return;
 
+            if (ratioStr === 'none') {
+                ws.style.width = '100vw';
+                ws.style.height = '100vh';
+            } else {
+                const parts = ratioStr.split(':');
+                const targetRatio = parseFloat(parts[0]) / parseFloat(parts[1]);
+                const winRatio = targetWindow.innerWidth / targetWindow.innerHeight;
+
+                if (winRatio > targetRatio) {
+                    // Window is wider than target ratio (pillarbox on sides)
+                    ws.style.height = '100vh';
+                    ws.style.width = `${100 * targetRatio}vh`;
+                } else {
+                    // Window is taller than target ratio (letterbox on top/bottom)
+                    ws.style.width = '100vw';
+                    ws.style.height = `${100 / targetRatio}vw`;
+                }
+            }
+        }
+
+        const aspectSelect = document.getElementById('aspect-ratio-select');
+        if (aspectSelect) {
+            aspectSelect.addEventListener('change', (e) => {
+                globalAspectRatio = e.target.value;
+                
+                // Force a resize event on the local window
+                window.dispatchEvent(new Event('resize'));
+                
+                // Sync to player window
+                if (secondWindow && !secondWindow.closed && secondWindow.setAspectRatio) {
+                    secondWindow.setAspectRatio(globalAspectRatio);
+                }
+            });
+        }
+
+        // --- Vector Drawing & Ping Logic ---
         function setupCanvas(targetWindow, isGM) {
             const doc = targetWindow.document;
+            const workspace = doc.getElementById('workspace');
             const canvas = doc.getElementById('overlay-canvas');
-            if (!canvas) return;
+            const pingCanvas = doc.getElementById('ping-canvas');
+            if (!canvas || !pingCanvas || !workspace) return;
             
             const ctx = canvas.getContext('2d');
+            const pCtx = pingCanvas.getContext('2d');
+            
             let isDrawing = false;
             let lastX = 0, lastY = 0;
+            let currentMode = 'none'; 
+            let drawHistory = [];
+
+            // Ping System Variables
+            let activePings = [];
+            let animatingPings = false;
+            let pingTimer = null;
+            let startX = 0, startY = 0;
+
+            function redrawAll() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawHistory.forEach(line => {
+                    const localX0 = line.nx0 * canvas.width;
+                    const localY0 = line.ny0 * canvas.width;
+                    const localX1 = line.nx1 * canvas.width;
+                    const localY1 = line.ny1 * canvas.width;
+                    const localSize = Math.max(1, line.nSize * canvas.width);
+                    
+                    ctx.globalCompositeOperation = line.mode === 'erase' ? 'destination-out' : 'source-over';
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(localX0, localY0);
+                    ctx.lineTo(localX1, localY1);
+                    ctx.strokeStyle = line.color;
+                    ctx.lineWidth = localSize;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                });
+                ctx.globalCompositeOperation = 'source-over';
+            }
 
             function resize() {
-                let temp = null;
-                if (canvas.width > 0 && canvas.height > 0) {
-                    temp = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                }
-                canvas.width = targetWindow.innerWidth;
-                canvas.height = targetWindow.innerHeight;
-                if (temp) ctx.putImageData(temp, 0, 0);
+                // Apply the aspect ratio dimensions to the workspace div first
+                applyAspectRatio(targetWindow, targetWindow.currentAspectRatio || globalAspectRatio);
+                
+                // Then size the canvases exactly to the new workspace dimensions
+                canvas.width = workspace.clientWidth;
+                canvas.height = workspace.clientHeight;
+                pingCanvas.width = workspace.clientWidth;
+                pingCanvas.height = workspace.clientHeight;
+                redrawAll(); 
             }
             targetWindow.addEventListener('resize', resize);
+            
+            // Allow remote window to change aspect ratio
+            targetWindow.setAspectRatio = function(ratioStr) {
+                targetWindow.currentAspectRatio = ratioStr;
+                resize();
+            }
+            
             resize(); 
+
+            // Helper to get mouse coordinates relative to the workspace (ignoring letterboxes)
+            function getMousePos(e) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top
+                };
+            }
+
+            // Ping Animation Loop
+            function animatePings() {
+                pCtx.clearRect(0, 0, pingCanvas.width, pingCanvas.height);
+                let alive = [];
+                
+                activePings.forEach(p => {
+                    p.radius += 2; 
+                    p.opacity -= 0.02; 
+                    
+                    if (p.opacity > 0) {
+                        const lx = p.nx * pingCanvas.width;
+                        const ly = p.ny * pingCanvas.width;
+                        
+                        pCtx.beginPath();
+                        pCtx.arc(lx, ly, p.radius, 0, Math.PI * 2);
+                        pCtx.strokeStyle = `rgba(${hexToRgb(p.color)}, ${p.opacity})`;
+                        pCtx.lineWidth = 4;
+                        pCtx.stroke();
+                        
+                        pCtx.beginPath();
+                        pCtx.arc(lx, ly, p.radius * 0.6, 0, Math.PI * 2);
+                        pCtx.strokeStyle = `rgba(${hexToRgb(p.color)}, ${p.opacity * 0.5})`;
+                        pCtx.lineWidth = 2;
+                        pCtx.stroke();
+                        
+                        alive.push(p);
+                    }
+                });
+                
+                activePings = alive;
+                if (activePings.length > 0) {
+                    requestAnimationFrame(animatePings);
+                } else {
+                    animatingPings = false;
+                }
+            }
+
+            function addLocalPing(nx, ny, color) {
+                activePings.push({ nx, ny, color, radius: 0, opacity: 1 });
+                if (!animatingPings) {
+                    animatingPings = true;
+                    requestAnimationFrame(animatePings);
+                }
+            }
+
+            targetWindow.remotePing = function(nx, ny, color) {
+                addLocalPing(nx, ny, color);
+            };
 
             const colorPicker = doc.getElementById('color-picker');
             const sizePicker = doc.getElementById('brush-size');
-            const toggleBtn = doc.getElementById('toggle-draw');
-            
-            // GM specific buttons
+            const toggleDraw = doc.getElementById('toggle-draw');
+            const toggleErase = doc.getElementById('toggle-erase');
             const clearGmBtn = doc.getElementById('clear-gm-btn');
             const clearPlayerBtn = doc.getElementById('clear-player-btn');
-            const remoteFsBtn = doc.getElementById('remote-fs-btn');
-            
-            // Player specific button
             const playerClearBtn = doc.getElementById('clear-btn');
 
-            if (colorPicker) {
-                colorPicker.value = isGM ? "#ff0000" : "#0088ff"; 
-            }
+            if (colorPicker) colorPicker.value = isGM ? "#ff0000" : "#0088ff"; 
 
-            function drawLine(x0, y0, x1, y1, color, size, emit) {
+            function drawLine(x0, y0, x1, y1, color, size, mode, emit, save = true) {
+                ctx.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over';
+
                 ctx.beginPath();
                 ctx.moveTo(x0, y0);
                 ctx.lineTo(x1, y1);
@@ -239,50 +416,92 @@
                 ctx.lineCap = 'round';
                 ctx.stroke();
 
+                ctx.globalCompositeOperation = 'source-over'; 
+
+                const nx0 = x0 / canvas.width;
+                const ny0 = y0 / canvas.width; 
+                const nx1 = x1 / canvas.width;
+                const ny1 = y1 / canvas.width;
+                const nSize = size / canvas.width;
+
+                if (save) {
+                    drawHistory.push({ nx0, ny0, nx1, ny1, color, nSize, mode });
+                }
+
                 if (emit) {
                     if (isGM && secondWindow && !secondWindow.closed) {
-                        // Fixed: We use secondWindow directly here
                         if (secondWindow.drawRemoteLine) {
-                            secondWindow.drawRemoteLine(x0, y0, x1, y1, color, size);
+                            secondWindow.drawRemoteLine(nx0, ny0, nx1, ny1, color, nSize, mode);
                         }
                     } else if (!isGM) {
-                        // Fixed: Player targets the main window directly
                         if (window.drawRemoteLine) {
-                            window.drawRemoteLine(x0, y0, x1, y1, color, size);
+                            window.drawRemoteLine(nx0, ny0, nx1, ny1, color, nSize, mode);
                         }
                     }
                 }
             }
 
-            targetWindow.drawRemoteLine = function(x0, y0, x1, y1, color, size) {
-                drawLine(x0, y0, x1, y1, color, size, false);
+            targetWindow.drawRemoteLine = function(nx0, ny0, nx1, ny1, color, nSize, mode) {
+                const localX0 = nx0 * canvas.width;
+                const localY0 = ny0 * canvas.width;
+                const localX1 = nx1 * canvas.width;
+                const localY1 = ny1 * canvas.width;
+                const localSize = Math.max(1, nSize * canvas.width);
+                
+                drawLine(localX0, localY0, localX1, localY1, color, localSize, mode, false, true);
             };
 
             targetWindow.clearRemoteCanvas = function() {
+                drawHistory = [];
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
             };
 
-            targetWindow.loadCanvasData = function(dataURL) {
-                const img = new Image();
-                img.onload = () => {
-                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                };
-                img.src = dataURL;
+            targetWindow.setDrawHistory = function(historyArray) {
+                drawHistory = [...historyArray];
+                redrawAll();
+            };
+            
+            targetWindow.getDrawHistory = function() {
+                return drawHistory;
             };
 
-            // UI Listeners
-            if (toggleBtn) {
-                toggleBtn.onclick = function(e) {
+            // UI Listeners & Tool Toggles
+            function updateToolUI() {
+                if (currentMode === 'draw') {
+                    if(toggleDraw) toggleDraw.style.backgroundColor = '#28a745';
+                    if(toggleErase) toggleErase.style.backgroundColor = '';
+                    canvas.classList.add('active');
+                } else if (currentMode === 'erase') {
+                    if(toggleDraw) toggleDraw.style.backgroundColor = '';
+                    if(toggleErase) toggleErase.style.backgroundColor = '#28a745';
+                    canvas.classList.add('active');
+                } else {
+                    if(toggleDraw) toggleDraw.style.backgroundColor = '';
+                    if(toggleErase) toggleErase.style.backgroundColor = '';
+                    canvas.classList.remove('active');
+                }
+            }
+
+            if (toggleDraw) {
+                toggleDraw.onclick = function(e) {
                     e.stopPropagation(); 
-                    canvas.classList.toggle('active');
-                    toggleBtn.style.backgroundColor = canvas.classList.contains('active') ? '#28a745' : ''; 
+                    currentMode = currentMode === 'draw' ? 'none' : 'draw';
+                    updateToolUI();
                 };
             }
 
-            // GM Clear Buttons
+            if (toggleErase) {
+                toggleErase.onclick = function(e) {
+                    e.stopPropagation();
+                    currentMode = currentMode === 'erase' ? 'none' : 'erase';
+                    updateToolUI();
+                }
+            }
+
             if (clearGmBtn) {
                 clearGmBtn.onclick = function(e) {
                     e.stopPropagation();
+                    drawHistory = [];
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                 };
             }
@@ -290,46 +509,85 @@
             if (clearPlayerBtn) {
                 clearPlayerBtn.onclick = function(e) {
                     e.stopPropagation();
-                    // Fixed scoping
                     if (isGM && secondWindow && !secondWindow.closed && secondWindow.clearRemoteCanvas) {
                         secondWindow.clearRemoteCanvas();
                     }
                 };
             }
 
-            // Remote Fullscreen Trigger
-            if (remoteFsBtn) {
-                remoteFsBtn.onclick = function(e) {
-                    e.stopPropagation();
-                    // Fixed scoping
-                    if (isGM && secondWindow && !secondWindow.closed && secondWindow.triggerFullscreen) {
-                        secondWindow.triggerFullscreen();
-                    }
-                };
-            }
-
-            // Player Clear Button (Only on player window)
             if (playerClearBtn) {
                 playerClearBtn.onclick = function(e) {
                     e.stopPropagation();
+                    drawHistory = [];
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                 };
             }
 
-            // Mouse interaction for drawing
+            // --- PING SYSTEM ---
+            targetWindow.addEventListener('mousedown', (e) => {
+                if (e.target.closest('#ui-layer') || e.target.closest('#mirror-ui')) return;
+                
+                const pos = getMousePos(e);
+                
+                // Only ping if clicking inside the actual workspace boundaries
+                if (pos.x < 0 || pos.y < 0 || pos.x > canvas.width || pos.y > canvas.height) return;
+
+                startX = pos.x;
+                startY = pos.y;
+                
+                pingTimer = setTimeout(() => {
+                    pingTimer = null;
+                    const color = colorPicker ? colorPicker.value : (isGM ? '#ff0000' : '#0088ff');
+                    const nx = startX / canvas.width;
+                    const ny = startY / canvas.width;
+                    
+                    addLocalPing(nx, ny, color);
+                    
+                    if (isGM && secondWindow && !secondWindow.closed && secondWindow.remotePing) {
+                        secondWindow.remotePing(nx, ny, color);
+                    } else if (!isGM && window.remotePing) {
+                        window.remotePing(nx, ny, color);
+                    }
+                }, 400); 
+            });
+
+            targetWindow.addEventListener('mousemove', (e) => {
+                if (pingTimer) {
+                    const pos = getMousePos(e);
+                    const dist = Math.hypot(pos.x - startX, pos.y - startY);
+                    if (dist > 5) {
+                        clearTimeout(pingTimer);
+                        pingTimer = null;
+                    }
+                }
+            });
+
+            targetWindow.addEventListener('mouseup', () => {
+                if (pingTimer) {
+                    clearTimeout(pingTimer);
+                    pingTimer = null;
+                }
+            });
+
+            // --- DRAWING SYSTEM ---
             canvas.addEventListener('mousedown', (e) => {
-                isDrawing = true;
-                lastX = e.clientX;
-                lastY = e.clientY;
+                if (currentMode !== 'none') {
+                    isDrawing = true;
+                    const pos = getMousePos(e);
+                    lastX = pos.x;
+                    lastY = pos.y;
+                }
             });
 
             canvas.addEventListener('mousemove', (e) => {
-                if (!isDrawing) return;
+                if (!isDrawing || currentMode === 'none') return;
+                const pos = getMousePos(e);
                 const color = colorPicker ? colorPicker.value : (isGM ? '#ff0000' : '#0088ff');
                 const size = sizePicker ? sizePicker.value : 5;
-                drawLine(lastX, lastY, e.clientX, e.clientY, color, size, true);
-                lastX = e.clientX;
-                lastY = e.clientY;
+                
+                drawLine(lastX, lastY, pos.x, pos.y, color, size, currentMode, true, true);
+                lastX = pos.x;
+                lastY = pos.y;
             });
 
             canvas.addEventListener('mouseup', () => isDrawing = false);
@@ -339,7 +597,6 @@
         setupCanvas(window, true);
 
         // --- Layout & Sync Logic ---
-
         function updateLayout() {
             const count = container.children.length;
             dragHint.style.display = count > 0 ? 'none' : 'block';
@@ -404,26 +661,29 @@
                 </head>
                 <body>
                     <div id="mirror-ui">
-                        <button onclick="triggerFullscreen(event)">Toggle Fullscreen</button>
+                        <button onclick="toggleFullScreen(event)">Toggle Fullscreen</button>
                         
                         <div class="draw-controls">
                             <button id="toggle-draw" title="Toggle Brush">🖌️ Draw</button>
+                            <button id="toggle-erase" title="Toggle Eraser">🧽 Erase</button>
                             <input type="color" id="color-picker" title="Brush Color">
                             <input type="range" id="brush-size" min="1" max="50" value="5" title="Brush Size">
                             <button id="clear-btn" title="Clear Player Drawing">🗑️ Clear</button>
                         </div>
                     </div>
                     
-                    <div id="container" class="mirror"></div>
-                    <canvas id="overlay-canvas"></canvas>
+                    <div id="workspace">
+                        <div id="container" class="mirror"></div>
+                        <canvas id="overlay-canvas"></canvas>
+                        <canvas id="ping-canvas"></canvas>
+                    </div>
                     
                     <script>
-                        function triggerFullscreen(e) {
+                        function toggleFullScreen(e) {
                             if (e) e.stopPropagation();
                             if (!document.fullscreenElement) {
                                 document.documentElement.requestFullscreen().catch(err => {
                                     console.warn(\`Browser blocked fullscreen attempt: \${err.message}\`);
-                                    alert("Your browser blocked the remote fullscreen request. Click 'Toggle Fullscreen' locally on this player window instead.");
                                 });
                             } else {
                                 if (document.exitFullscreen) {
@@ -438,18 +698,18 @@
             secondWindow.document.close();
 
             setTimeout(() => {
+                // Initialize the player window with the GM's current aspect ratio
+                secondWindow.currentAspectRatio = globalAspectRatio;
                 setupCanvas(secondWindow, false);
                 syncSecondWindow();
 
-                const mainCanvas = document.getElementById('overlay-canvas');
-                if (mainCanvas && secondWindow.loadCanvasData) {
-                    secondWindow.loadCanvasData(mainCanvas.toDataURL());
+                if (window.getDrawHistory && secondWindow.setDrawHistory) {
+                    secondWindow.setDrawHistory(window.getDrawHistory());
                 }
             }, 50);
         }
 
         // --- Bulletproof Drag & Drop Logic ---
-
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             document.addEventListener(eventName, (e) => {
                 e.preventDefault();
