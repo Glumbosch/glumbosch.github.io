@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FDF Manager - Extract & Inject PDF Forms</title>
+    <!-- Import pdf-lib -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --pane-bg: rgba(30, 41, 59, 0.7);
+            --text-color: #f8fafc;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        header {
+            padding: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        
+        header p {
+            color: #94a3b8;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 2rem;
+            padding: 0 2rem 2rem 2rem;
+            flex: 1;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .pane {
+            background: var(--pane-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+        
+        .pane:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .pane h2 {
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+        }
+
+        .file-drop-area {
+            flex: 1;
+            border: 2px dashed rgba(255,255,255,0.2);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            background: rgba(0,0,0,0.1);
+        }
+
+        .file-drop-area:hover, .file-drop-area.dragover {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .file-drop-area input[type="file"] {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .file-drop-area .icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.7;
+        }
+
+        textarea {
+            flex: 1;
+            width: 100%;
+            background: rgba(0,0,0,0.2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem;
+            color: #e2e8f0;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            resize: none;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        textarea:focus {
+            border-color: var(--accent);
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 1rem;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            width: 100%;
+        }
+
+        button:hover:not(:disabled) {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
+        }
+        
+        button:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .file-name {
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: #94a3b8;
+            word-break: break-all;
+        }
+
+        .status {
+            font-size: 0.9rem;
+            text-align: center;
+            min-height: 1.5em;
+            color: #10b981;
+        }
+        .status.error {
+            color: #ef4444;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            .pane {
+                min-height: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>FDF Manager</h1>
+        <p>Extract and Inject PDF Form Data Locally</p>
+    </header>
+
+    <div class="container">
+        <!-- Pane 1: Extract -->
+        <div class="pane">
+            <h2>📤 Extract FDF</h2>
+            <div class="file-drop-area" id="extractDrop">
+                <div class="icon">📄</div>
+                <p>Drag & Drop PDF here</p>
+                <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem;">or click to browse</p>
+                <input type="file" id="extractInput" accept=".pdf">
+            </div>
+            <div class="file-name" id="extractFileName">No file selected</div>
+            <button id="extractBtn" disabled>Extract Data ➔</button>
+            <div class="status" id="extractStatus"></div>
+        </div>
+
+        <!-- Pane 2: Editor -->
+        <div class="pane">
+            <h2>📝 FDF Data</h2>
+            <div class="file-drop-area" id="loadFdfDrop">
+                <div class="icon">📝</div>
+                <p>Drag & Drop FDF file</p>
+                <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem;">or click to browse</p>
+                <input type="file" id="loadFdfInput" accept=".fdf,.txt">
+            </div>
+            <textarea id="fdfData" style="display: none;" placeholder="FDF data will appear here...&#10;&#10;You can also paste FDF data here directly before injecting."></textarea>
+            <div style="display: flex; gap: 1rem;">
+                <button id="downloadFdfBtn" style="display: none;" disabled>⬇️ Download .fdf</button>
+                <button id="clearFdfBtn" style="display: none; background: #ef4444;">🗑️ Clear</button>
+            </div>
+            <div class="status" id="editorStatus"></div>
+        </div>
+
+        <!-- Pane 3: Inject -->
+        <div class="pane">
+            <h2>📥 Inject FDF</h2>
+            <div class="file-drop-area" id="injectDrop">
+                <div class="icon">📄</div>
+                <p>Drag & Drop Target PDF</p>
+                <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem;">or click to browse</p>
+                <input type="file" id="injectInput" accept=".pdf">
+            </div>
+            <div class="file-name" id="injectFileName">No file selected</div>
+            <button id="injectBtn" disabled>Inject Data & Download PDF</button>
+            <div class="status" id="injectStatus"></div>
+        </div>
+    </div>
+
+    <script>
+        // Utilities
+        function escapePdfString(str) {
+            if (str == null) return '';
+            return str.toString()
+                .replace(/\\/g, '\\\\')
+                .replace(/\(/g, '\\(')
+                .replace(/\)/g, '\\)')
+                .replace(/\r/g, '\\r');
+        }
+
+        function unescapePdfString(str) {
+            if (str == null) return '';
+            return str
+                .replace(/\\\)/g, ')')
+                .replace(/\\\(/g, '(')
+                .replace(/\\r/g, '\r')
+                .replace(/\\\\/g, '\\');
+        }
+
+        // --- Extractor Logic ---
+        const extractInput = document.getElementById('extractInput');
+        const extractFileName = document.getElementById('extractFileName');
+        const extractBtn = document.getElementById('extractBtn');
+        const extractStatus = document.getElementById('extractStatus');
+        
+        const fdfData = document.getElementById('fdfData');
+        const downloadFdfBtn = document.getElementById('downloadFdfBtn');
+        
+        let extractFileBytes = null;
+
+        extractInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                extractFileName.textContent = file.name;
+                extractFileBytes = await file.arrayBuffer();
+                extractBtn.disabled = false;
+                extractStatus.textContent = 'PDF loaded ready for extraction.';
+                extractStatus.className = 'status';
+            }
+        });
+
+        extractBtn.addEventListener('click', async () => {
+            if (!extractFileBytes) return;
+            try {
+                extractStatus.textContent = 'Loading PDF...';
+                extractStatus.className = 'status';
+                await new Promise(r => setTimeout(r, 10));
+                
+                const pdfDoc = await PDFLib.PDFDocument.load(extractFileBytes.slice(0));
+                const form = pdfDoc.getForm();
+                const fields = form.getFields();
+                
+                extractStatus.textContent = `Parsing ${fields.length} fields...`;
+                await new Promise(r => setTimeout(r, 10));
+
+                let fdfContent = `%FDF-1.2\n%âãÏÓ\n1 0 obj\n<<\n/FDF\n<<\n/Fields [\n`;
+                const seenFields = new Set();
+                let extractedCount = 0;
+                
+                for (let i = 0; i < fields.length; i++) {
+                    if (i % 250 === 0) {
+                        extractStatus.textContent = `Extracting... (${i}/${fields.length})`;
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+                    const field = fields[i];
+                    const name = field.getName();
+                    
+                    if (seenFields.has(name)) continue;
+                    seenFields.add(name);
+                    
+                    let value = null;
+                    let isNameValue = false;
+
+                    if (field instanceof PDFLib.PDFTextField) {
+                        value = field.getText();
+                    } else if (field instanceof PDFLib.PDFCheckBox) {
+                        value = field.isChecked() ? 'Yes' : 'Off';
+                        isNameValue = true;
+                    } else if (field instanceof PDFLib.PDFRadioGroup) {
+                        value = field.getSelected();
+                        isNameValue = true;
+                    } else if (field instanceof PDFLib.PDFDropdown || field instanceof PDFLib.PDFOptionList) {
+                        const selected = field.getSelected();
+                        value = selected.length > 0 ? selected[0] : '';
+                    }
+
+                    if (value !== null && value !== undefined) {
+                        extractedCount++;
+                        const escapedName = escapePdfString(name);
+                        if (isNameValue) {
+                            fdfContent += `<< /T (${escapedName}) /V /${value} >>\n`;
+                        } else {
+                            const escapedValue = escapePdfString(value);
+                            fdfContent += `<< /T (${escapedName}) /V (${escapedValue}) >>\n`;
+                        }
+                    }
+                }
+                
+                fdfContent += `]\n>>\n>>\nendobj\ntrailer\n<<\n/Root 1 0 R\n>>\n%%EOF`;
+                
+                fdfData.value = fdfContent;
+                showFdfEditor();
+                downloadFdfBtn.disabled = false;
+                extractStatus.textContent = `Success! Extracted ${extractedCount} unique fields.`;
+                
+                // Trigger input event to enable injection if ready
+                fdfData.dispatchEvent(new Event('input'));
+                
+            } catch (err) {
+                console.error(err);
+                extractStatus.textContent = 'Error: ' + err.message;
+                extractStatus.className = 'status error';
+            }
+        });
+
+        // --- Editor Logic ---
+        const loadFdfInput = document.getElementById('loadFdfInput');
+        const loadFdfDrop = document.getElementById('loadFdfDrop');
+        const clearFdfBtn = document.getElementById('clearFdfBtn');
+
+        function showFdfEditor() {
+            loadFdfDrop.style.display = 'none';
+            fdfData.style.display = 'block';
+            downloadFdfBtn.style.display = 'flex';
+            clearFdfBtn.style.display = 'flex';
+        }
+
+        function hideFdfEditor() {
+            loadFdfDrop.style.display = 'flex';
+            fdfData.style.display = 'none';
+            downloadFdfBtn.style.display = 'none';
+            clearFdfBtn.style.display = 'none';
+            fdfData.value = '';
+            fdfData.dispatchEvent(new Event('input'));
+            editorStatus.textContent = '';
+        }
+
+        loadFdfInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    fdfData.value = e.target.result;
+                    showFdfEditor();
+                    fdfData.dispatchEvent(new Event('input'));
+                    editorStatus.textContent = 'FDF file loaded.';
+                    editorStatus.className = 'status';
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        clearFdfBtn.addEventListener('click', hideFdfEditor);
+
+        fdfData.addEventListener('input', () => {
+            downloadFdfBtn.disabled = fdfData.value.trim().length === 0;
+            checkInjectReady();
+        });
+
+        downloadFdfBtn.addEventListener('click', () => {
+            const blob = new Blob([fdfData.value], { type: 'application/vnd.fdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'form_data.fdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // --- Injector Logic ---
+        const injectInput = document.getElementById('injectInput');
+        const injectFileName = document.getElementById('injectFileName');
+        const injectBtn = document.getElementById('injectBtn');
+        const injectStatus = document.getElementById('injectStatus');
+        
+        let injectFileBytes = null;
+        let injectFileNameStr = 'output.pdf';
+
+        injectInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                injectFileName.textContent = file.name;
+                injectFileNameStr = file.name;
+                injectFileBytes = await file.arrayBuffer();
+                injectStatus.textContent = 'Target PDF loaded.';
+                injectStatus.className = 'status';
+                checkInjectReady();
+            }
+        });
+
+        function checkInjectReady() {
+            if (injectFileBytes && fdfData.value.trim().length > 0) {
+                injectBtn.disabled = false;
+            } else {
+                injectBtn.disabled = true;
+            }
+        }
+
+        injectBtn.addEventListener('click', async () => {
+            if (!injectFileBytes || !fdfData.value) return;
+            
+            try {
+                injectStatus.textContent = 'Loading PDF...';
+                injectStatus.className = 'status';
+                await new Promise(r => setTimeout(r, 10));
+                
+                const pdfDoc = await PDFLib.PDFDocument.load(injectFileBytes.slice(0));
+                const form = pdfDoc.getForm();
+                
+                injectStatus.textContent = 'Parsing FDF data...';
+                await new Promise(r => setTimeout(r, 10));
+
+                // Parse FDF
+                const fdfText = fdfData.value;
+                const fieldDict = {};
+                // Match: << /T (Name) /V /NameValue >> OR << /T (Name) /V (StringValue) >>
+                const regex = /<<\s*\/T\s*\((.*?)\)\s*\/V\s*(?:\/([\w-]+)|\(([\s\S]*?)\))\s*>>/g;
+                let match;
+                while ((match = regex.exec(fdfText)) !== null) {
+                    const name = unescapePdfString(match[1]);
+                    const nameVal = match[2];
+                    const stringVal = match[3];
+                    
+                    let value = nameVal !== undefined ? nameVal : unescapePdfString(stringVal);
+                    fieldDict[name] = { value, isName: nameVal !== undefined };
+                }
+
+                const entries = Object.entries(fieldDict);
+                let injectedCount = 0;
+                
+                for (let i = 0; i < entries.length; i++) {
+                    if (i % 100 === 0) {
+                        injectStatus.textContent = `Injecting... (${i}/${entries.length})`;
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+                    const [name, data] = entries[i];
+                    try {
+                        const field = form.getField(name);
+                        if (!field) continue;
+                        
+                        if (field instanceof PDFLib.PDFTextField) {
+                            field.setText(data.value);
+                        } else if (field instanceof PDFLib.PDFCheckBox) {
+                            if (data.value === 'Yes' || data.value === 'On' || data.value === 'true') {
+                                field.check();
+                            } else {
+                                field.uncheck();
+                            }
+                        } else if (field instanceof PDFLib.PDFRadioGroup) {
+                            field.select(data.value);
+                        } else if (field instanceof PDFLib.PDFDropdown || field instanceof PDFLib.PDFOptionList) {
+                            field.select(data.value);
+                        }
+
+                        // Force viewer to regenerate appearance by removing the old one (only for Text Fields)
+                        if (field instanceof PDFLib.PDFTextField) {
+                            field.acroField.dict.delete(PDFLib.PDFName.of('AP'));
+                            const widgets = field.acroField.getWidgets();
+                            if (widgets && widgets.length > 0) {
+                                for (const widget of widgets) {
+                                    widget.dict.delete(PDFLib.PDFName.of('AP'));
+                                }
+                            }
+                        }
+
+                        injectedCount++;
+                    } catch (e) {
+                        console.warn(`Could not set field ${name}: ${e.message}`);
+                    }
+                }
+
+                injectStatus.textContent = 'Saving PDF (this may take a moment)...';
+                await new Promise(r => setTimeout(r, 10));
+                
+                // Force the PDF viewer to render the appearance using its native embedded font styling
+                form.acroForm.dict.set(PDFLib.PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
+                
+                // Save without updating appearances so pdf-lib doesn't overwrite custom fonts with Helvetica
+                const pdfBytes = await pdfDoc.save({ updateFieldAppearances: false });
+                
+                // Download filled PDF
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = injectFileNameStr.replace('.pdf', '_filled.pdf');
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                injectStatus.textContent = `Success! Injected ${injectedCount} fields.`;
+                injectStatus.className = 'status';
+
+            } catch (err) {
+                console.error(err);
+                injectStatus.textContent = 'Error: ' + err.message;
+                injectStatus.className = 'status error';
+            }
+        });
+
+        // Drag & Drop visual sugar
+        ['extractDrop', 'loadFdfDrop', 'injectDrop'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                el.classList.add('dragover');
+            });
+            el.addEventListener('dragleave', () => {
+                el.classList.remove('dragover');
+            });
+            el.addEventListener('drop', (e) => {
+                e.preventDefault();
+                el.classList.remove('dragover');
+                const input = el.querySelector('input[type="file"]');
+                if (e.dataTransfer.files.length > 0) {
+                    input.files = e.dataTransfer.files;
+                    input.dispatchEvent(new Event('change'));
+                }
+            });
+        });
+    </script>
+</body>
+</html>
